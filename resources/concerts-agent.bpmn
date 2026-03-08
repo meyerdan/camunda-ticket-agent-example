@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  xmlns:modeler="http://camunda.org/schema/modeler/1.0"
+  id="Definitions_1"
+  targetNamespace="http://bpmn.io/schema/bpmn"
+  modeler:executionPlatform="Camunda Cloud"
+  modeler:executionPlatformVersion="8.9.0">
+
+  <bpmn:message id="Message_WebhookReply" name="msg-webhook-reply">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=replyCorrelationKey"/>
+    </bpmn:extensionElements>
+  </bpmn:message>
+
+  <bpmn:process id="concerts-agent" name="Concerts Agent" isExecutable="true">
+
+    <!-- Timer Start: weekly -->
+    <bpmn:startEvent id="StartEvent_Timer" name="Weekly check">
+      <bpmn:outgoing>Flow_TimerToFetch</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeCycle xsi:type="bpmn:tFormalExpression">="R/P7D"</bpmn:timeCycle>
+      </bpmn:timerEventDefinition>
+    </bpmn:startEvent>
+
+    <!-- Manual Start: for testing -->
+    <bpmn:startEvent id="StartEvent_Manual" name="Manual start">
+      <bpmn:outgoing>Flow_ManualToFetch</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <!-- Fetch concerts from Ticketmaster -->
+    <bpmn:serviceTask id="Task_FetchConcerts" name="Fetch concerts">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="fetch-concerts" retries="3"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_TimerToFetch</bpmn:incoming>
+      <bpmn:incoming>Flow_ManualToFetch</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToFetchSpotify</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- Fetch Spotify library -->
+    <bpmn:serviceTask id="Task_FetchSpotify" name="Fetch Spotify library">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="fetch-spotify" retries="3"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToFetchSpotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToMatchArtists</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- Match artists -->
+    <bpmn:serviceTask id="Task_MatchArtists" name="Match artists">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="match-artists" retries="1"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToMatchArtists</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToGatewayMatches</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- Gateway: any matches? -->
+    <bpmn:exclusiveGateway id="Gateway_Matches" name="Matches found?" default="Flow_ToAgent">
+      <bpmn:incoming>Flow_ToGatewayMatches</bpmn:incoming>
+      <bpmn:outgoing>Flow_NoMatches</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToAgent</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <!-- No matches → end -->
+    <bpmn:endEvent id="End_NoMatches" name="No matches">
+      <bpmn:incoming>Flow_NoMatches</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- ====== AI AGENT AD-HOC SUB-PROCESS ====== -->
+    <bpmn:adHocSubProcess id="AgentTools" name="Concert Assistant">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="io.camunda.agenticai:aiagent-job-worker:1" retries="3"/>
+        <zeebe:ioMapping>
+          <zeebe:input source="openai" target="provider.type"/>
+          <zeebe:input source="{{secrets.OPENAI_API_KEY}}" target="provider.openai.authentication.apiKey"/>
+          <zeebe:input source="gpt-4o" target="provider.openai.model.model"/>
+          <zeebe:input source="=4096" target="provider.openai.model.parameters.maxCompletionTokens"/>
+          <zeebe:input source="=0.5" target="provider.openai.model.parameters.temperature"/>
+          <zeebe:input source="=&#34;You are a friendly concert assistant for a couple in Boston. You have a list of upcoming concerts that match their Spotify listening history.&#10;&#10;CRITICAL RULES:&#10;- You can ONLY communicate with the user by calling the 'Send message and wait for reply' tool. You have NO other way to reach them.&#10;- NEVER end the conversation without sending a message first. If the user asks a question, you MUST call the send tool with your answer.&#10;- After each user reply, decide what to do next: answer their question, use a tool to look something up, or ask a follow-up.&#10;- Only stop (make no more tool calls) AFTER you have sent a final goodbye message AND the user has confirmed they are done.&#10;&#10;Your job:&#10;1. Send an initial message notifying them about the matching concerts&#10;2. Answer questions about concerts using the available tools (get details, check prices)&#10;3. Book tickets when requested&#10;4. Keep the conversation going until the user says goodbye or is done&#10;&#10;Available tools:&#10;- 'Send message and wait for reply': Send a message and wait for the user response. ALWAYS use this to communicate.&#10;- 'Get concert details': Look up detailed info about a specific concert.&#10;- 'Check ticket price': Check pricing and availability for a concert.&#10;- 'Book tickets': Book tickets for a concert.&#10;&#10;Keep messages concise and friendly — this is a chat conversation.&#10;Start by sending a notification about the matching concerts.&#34;" target="data.systemPrompt.prompt"/>
+          <zeebe:input source="=&#34;Matching concerts found: &#34; + string(matchedConcerts)" target="data.userPrompt.prompt"/>
+          <zeebe:input source="in-process" target="data.memory.storage.type"/>
+          <zeebe:input source="=20" target="data.memory.contextWindowSize"/>
+          <zeebe:input source="=30" target="data.limits.maxModelCalls"/>
+        </zeebe:ioMapping>
+        <zeebe:adHoc outputCollection="toolCallResults" outputElement="={&#10;  id: toolCall._meta.id,&#10;  name: toolCall._meta.name,&#10;  content: toolCallResult&#10;}"/>
+        <zeebe:taskHeaders>
+          <zeebe:header key="resultVariable" value="agent"/>
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToAgent</bpmn:incoming>
+      <bpmn:outgoing>Flow_AgentDone</bpmn:outgoing>
+
+      <!-- ── Tool 1: Send message and wait for reply (sub-flow) ── -->
+      <bpmn:serviceTask id="Tool_SendMessage" name="Send message and wait for reply">
+        <bpmn:documentation>Send a WhatsApp message to the user and wait for their reply. Returns the user's reply text. Use this tool every time you want to communicate with the user.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="send-whatsapp-reply" retries="1"/>
+          <zeebe:ioMapping>
+            <zeebe:input source="=fromAi(toolCall.messageText, &#34;The message text to send to the user via WhatsApp&#34;, &#34;string&#34;)" target="messageText"/>
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:outgoing>Flow_SendToWait</bpmn:outgoing>
+      </bpmn:serviceTask>
+
+      <bpmn:intermediateCatchEvent id="Tool_WaitReply" name="Wait for reply">
+        <bpmn:extensionElements>
+          <zeebe:properties>
+            <zeebe:property name="inbound.type" value="io.camunda:webhook:1"/>
+            <zeebe:property name="inbound.subtype" value="ConfigurableInboundWebhook"/>
+            <zeebe:property name="inbound.context" value="whatsapp-reply"/>
+            <zeebe:property name="inbound.shouldValidateHmac" value="disabled"/>
+            <zeebe:property name="inbound.auth.type" value="NONE"/>
+            <zeebe:property name="correlationKeyExpression" value="=request.body.correlationKey"/>
+            <zeebe:property name="resultExpression" value="={toolCallResult: request.body.text}"/>
+            <zeebe:property name="consumeUnmatchedEvents" value="true"/>
+          </zeebe:properties>
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_SendToWait</bpmn:incoming>
+        <bpmn:messageEventDefinition messageRef="Message_WebhookReply"/>
+      </bpmn:intermediateCatchEvent>
+
+      <bpmn:sequenceFlow id="Flow_SendToWait" sourceRef="Tool_SendMessage" targetRef="Tool_WaitReply"/>
+
+      <!-- ── Tool 2: Get concert details ── -->
+      <bpmn:serviceTask id="Tool_GetDetails" name="Get concert details">
+        <bpmn:documentation>Look up detailed information about a specific concert from the matched list, including venue, date, performers, and description.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="get-concert-details" retries="1"/>
+          <zeebe:ioMapping>
+            <zeebe:input source="=fromAi(toolCall.concertName, &#34;Name or partial name of the concert to look up&#34;, &#34;string&#34;)" target="concertName"/>
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+
+      <!-- ── Tool 3: Check ticket price ── -->
+      <bpmn:serviceTask id="Tool_CheckPrice" name="Check ticket price">
+        <bpmn:documentation>Check ticket pricing and availability for a specific concert. Returns price ranges and available ticket types.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="check-ticket-price" retries="1"/>
+          <zeebe:ioMapping>
+            <zeebe:input source="=fromAi(toolCall.concertName, &#34;Name or partial name of the concert to check pricing for&#34;, &#34;string&#34;)" target="concertName"/>
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+
+      <!-- ── Tool 4: Book tickets ── -->
+      <bpmn:serviceTask id="Tool_BookTickets" name="Book tickets">
+        <bpmn:documentation>Book tickets for a concert. Use this when the user confirms they want to purchase tickets.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="book-tickets" retries="1"/>
+          <zeebe:ioMapping>
+            <zeebe:input source="=fromAi(toolCall.concertName, &#34;Name of the concert to book tickets for&#34;, &#34;string&#34;)" target="concertName"/>
+            <zeebe:input source="=fromAi(toolCall.quantity, &#34;Number of tickets to book&#34;, &#34;number&#34;)" target="quantity"/>
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+
+    </bpmn:adHocSubProcess>
+
+    <!-- Boundary error on agent -->
+    <bpmn:boundaryEvent id="BoundaryEvent_AgentError" name="Agent error" attachedToRef="AgentTools">
+      <bpmn:outgoing>Flow_ToErrorEnd</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_AgentError"/>
+    </bpmn:boundaryEvent>
+
+    <!-- End events -->
+    <bpmn:endEvent id="End_Done" name="Done">
+      <bpmn:incoming>Flow_AgentDone</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="End_Error" name="Agent error">
+      <bpmn:incoming>Flow_ToErrorEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- Sequence Flows -->
+    <bpmn:sequenceFlow id="Flow_TimerToFetch" sourceRef="StartEvent_Timer" targetRef="Task_FetchConcerts"/>
+    <bpmn:sequenceFlow id="Flow_ManualToFetch" sourceRef="StartEvent_Manual" targetRef="Task_FetchConcerts"/>
+    <bpmn:sequenceFlow id="Flow_ToFetchSpotify" sourceRef="Task_FetchConcerts" targetRef="Task_FetchSpotify"/>
+    <bpmn:sequenceFlow id="Flow_ToMatchArtists" sourceRef="Task_FetchSpotify" targetRef="Task_MatchArtists"/>
+    <bpmn:sequenceFlow id="Flow_ToGatewayMatches" sourceRef="Task_MatchArtists" targetRef="Gateway_Matches"/>
+    <bpmn:sequenceFlow id="Flow_NoMatches" sourceRef="Gateway_Matches" targetRef="End_NoMatches">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=count(matchedConcerts) = 0</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToAgent" sourceRef="Gateway_Matches" targetRef="AgentTools"/>
+    <bpmn:sequenceFlow id="Flow_AgentDone" sourceRef="AgentTools" targetRef="End_Done"/>
+    <bpmn:sequenceFlow id="Flow_ToErrorEnd" sourceRef="BoundaryEvent_AgentError" targetRef="End_Error"/>
+
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="concerts-agent">
+
+      <bpmndi:BPMNShape id="StartEvent_Timer_di" bpmnElement="StartEvent_Timer">
+        <dc:Bounds x="152" y="222" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="136" y="265" width="68" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="StartEvent_Manual_di" bpmnElement="StartEvent_Manual">
+        <dc:Bounds x="152" y="292" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="136" y="335" width="64" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Task_FetchConcerts_di" bpmnElement="Task_FetchConcerts">
+        <dc:Bounds x="240" y="230" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Task_FetchSpotify_di" bpmnElement="Task_FetchSpotify">
+        <dc:Bounds x="390" y="230" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Task_MatchArtists_di" bpmnElement="Task_MatchArtists">
+        <dc:Bounds x="540" y="230" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Gateway_Matches_di" bpmnElement="Gateway_Matches" isMarkerVisible="true">
+        <dc:Bounds x="695" y="245" width="50" height="50"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="680" y="221" width="80" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="End_NoMatches_di" bpmnElement="End_NoMatches">
+        <dc:Bounds x="702" y="392" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="687" y="435" width="66" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Ad-hoc sub-process (expanded) -->
+      <bpmndi:BPMNShape id="AgentTools_di" bpmnElement="AgentTools" isExpanded="true">
+        <dc:Bounds x="800" y="100" width="680" height="350"/>
+      </bpmndi:BPMNShape>
+
+      <!-- Tools inside ad-hoc -->
+      <bpmndi:BPMNShape id="Tool_SendMessage_di" bpmnElement="Tool_SendMessage">
+        <dc:Bounds x="840" y="140" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Tool_WaitReply_di" bpmnElement="Tool_WaitReply">
+        <dc:Bounds x="1002" y="162" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="986" y="205" width="68" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Tool_GetDetails_di" bpmnElement="Tool_GetDetails">
+        <dc:Bounds x="1140" y="140" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Tool_CheckPrice_di" bpmnElement="Tool_CheckPrice">
+        <dc:Bounds x="840" y="280" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Tool_BookTickets_di" bpmnElement="Tool_BookTickets">
+        <dc:Bounds x="990" y="280" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="Flow_SendToWait_di" bpmnElement="Flow_SendToWait">
+        <di:waypoint x="940" y="180"/>
+        <di:waypoint x="1002" y="180"/>
+      </bpmndi:BPMNEdge>
+
+      <!-- End events -->
+      <bpmndi:BPMNShape id="End_Done_di" bpmnElement="End_Done">
+        <dc:Bounds x="1542" y="252" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="1548" y="295" width="25" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="End_Error_di" bpmnElement="End_Error">
+        <dc:Bounds x="1542" y="492" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="1528" y="535" width="57" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="BoundaryEvent_AgentError_di" bpmnElement="BoundaryEvent_AgentError">
+        <dc:Bounds x="1122" y="432" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="1112" y="475" width="57" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- Sequence flow edges -->
+      <bpmndi:BPMNEdge id="Flow_TimerToFetch_di" bpmnElement="Flow_TimerToFetch">
+        <di:waypoint x="188" y="240"/>
+        <di:waypoint x="214" y="240"/>
+        <di:waypoint x="214" y="270"/>
+        <di:waypoint x="240" y="270"/>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_ManualToFetch_di" bpmnElement="Flow_ManualToFetch">
+        <di:waypoint x="188" y="310"/>
+        <di:waypoint x="214" y="310"/>
+        <di:waypoint x="214" y="270"/>
+        <di:waypoint x="240" y="270"/>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_ToFetchSpotify_di" bpmnElement="Flow_ToFetchSpotify">
+        <di:waypoint x="340" y="270"/>
+        <di:waypoint x="390" y="270"/>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_ToMatchArtists_di" bpmnElement="Flow_ToMatchArtists">
+        <di:waypoint x="490" y="270"/>
+        <di:waypoint x="540" y="270"/>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_ToGatewayMatches_di" bpmnElement="Flow_ToGatewayMatches">
+        <di:waypoint x="640" y="270"/>
+        <di:waypoint x="695" y="270"/>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_NoMatches_di" bpmnElement="Flow_NoMatches">
+        <di:waypoint x="720" y="295"/>
+        <di:waypoint x="720" y="392"/>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_ToAgent_di" bpmnElement="Flow_ToAgent">
+        <di:waypoint x="745" y="270"/>
+        <di:waypoint x="800" y="270"/>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_AgentDone_di" bpmnElement="Flow_AgentDone">
+        <di:waypoint x="1480" y="270"/>
+        <di:waypoint x="1542" y="270"/>
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_ToErrorEnd_di" bpmnElement="Flow_ToErrorEnd">
+        <di:waypoint x="1140" y="468"/>
+        <di:waypoint x="1140" y="510"/>
+        <di:waypoint x="1542" y="510"/>
+      </bpmndi:BPMNEdge>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</bpmn:definitions>

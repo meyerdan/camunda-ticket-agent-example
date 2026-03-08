@@ -1,0 +1,17 @@
+{
+  "name": "concerts-agent",
+  "version": "1.0.0",
+  "description": "Camunda 8 process — Boston concert checker with Spotify matching and WhatsApp notifications",
+  "type": "module",
+  "scripts": {
+    "workers": "node workers/index.js",
+    "chat": "node workers/chat-server.js",
+    "dev": "node --watch workers/index.js"
+  },
+  "dependencies": {
+    "@camunda8/sdk": "^8.8.0"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
