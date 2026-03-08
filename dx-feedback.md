@@ -255,6 +255,31 @@ This is a direct consequence of Problem 8. Fixing version priority and improving
 
 ---
 
+## Problem 11: The AI Agent connector is not discoverable from the problem description
+
+### What happened
+
+When building this project, the initial design used an **explicit BPMN conversation loop**: receive message → call LLM (via `@anthropic-ai/sdk` in a custom worker) → send reply → check if conversation is done → loop back. This is the standard BPMN pattern for iterative interactions and the one an AI coding assistant (or any developer familiar with BPMN but not Camunda's connector catalog) would naturally reach for.
+
+The AI Agent connector with an ad-hoc sub-process — where the agent drives the conversation through tool calls and no explicit loop is needed — was only discovered later when the [Camunda AI Dev Kit](https://github.com/meyerdan/camunda-ai-dev-kit) introduced the pattern. The dev kit's `new-agent` skill scaffolded the ad-hoc sub-process with root-element tools, `fromAi()` parameters, and `toolCallResult` output mapping.
+
+Without the dev kit, the project would have shipped with the hand-rolled loop, a direct LLM SDK dependency, and a custom `process-message.js` worker — all unnecessary complexity.
+
+### Why it matters
+
+- **The problem description doesn't lead to the solution.** A developer thinking "I need a process that has a conversation with a user" will search for "BPMN conversation loop" or "message correlation patterns," not "AI Agent ad-hoc sub-process." The connector solves the problem elegantly, but you have to already know it exists.
+- **AI coding assistants are particularly affected.** They pattern-match from training data, which has abundant examples of explicit loops and very few examples of Camunda's agentic connector pattern. Without a dev kit or explicit guidance, they will consistently choose the worse architecture.
+- **The ad-hoc sub-process concept is unfamiliar.** Even developers who find the AI Agent connector docs may not understand that "tools are root elements in an ad-hoc sub-process" means they don't need a loop. The mental model shift from "explicit orchestration" to "agent-driven tool calling" needs a bridge.
+- **The manual approach works but is worse in every way.** The explicit loop required more BPMN elements, a custom worker, a direct LLM dependency, manual context management, and a "done" check gateway. The AI Agent connector eliminated all of this. But "it works" is the enemy of "there's a better way" — developers who build the loop first have little reason to discover the connector later.
+
+### Suggestion
+
+1. **Use-case-based documentation entry points.** Add a "Building conversational processes" or "Adding AI to your process" guide that starts from the problem ("I want my process to have a back-and-forth conversation") and leads to the AI Agent connector — not buried in the connector catalog but linked from the main BPMN patterns / best practices docs.
+2. **"Before and after" examples.** Show the explicit loop pattern side-by-side with the AI Agent connector approach, making the simplification immediately visible. This validates developers who built the loop ("you're not wrong") while showing the better path.
+3. **Dev tooling that suggests the pattern.** The Camunda AI Dev Kit proved this works — when the `new-agent` skill was available, the right architecture emerged naturally. Integrating similar guidance into the Modeler (e.g., "This loop with an LLM call could be replaced by an AI Agent sub-process") or the docs would have the same effect.
+
+---
+
 ## Summary
 
 | Problem | Severity | Fix Complexity | Known Issue? |
@@ -269,5 +294,6 @@ This is a direct consequence of Problem 8. Fixing version priority and improving
 | Webhook path conflicts across versions | High | Medium (version priority logic) | Partially — [#3227](https://github.com/camunda/connectors/issues/3227) fixed in 8.9.0, but fix introduced this edge case |
 | Message correlation targets random instances | Medium | Low (docs + runtime warning) | By design — [documented](https://docs.camunda.io/docs/components/concepts/messages/) but surprising |
 | resultExpression failures indistinguishable from version conflicts | High | Low (logging improvement) | No |
+| AI Agent connector not discoverable from problem description | High | Medium (docs + use-case guides) | No |
 
-The common theme: **Camunda's runtime and execution model are strong, but the developer experience outside the visual modeler has gaps.** As AI-assisted development grows, these gaps will become increasingly visible. The highest-leverage fixes are publishing programmatic references for connector input contracts and improving connector runtime observability (which version handles which request).
+The common theme: **Camunda's runtime and execution model are strong, but the developer experience outside the visual modeler has gaps.** As AI-assisted development grows, these gaps will become increasingly visible. The highest-leverage fixes are publishing programmatic references for connector input contracts, improving connector runtime observability (which version handles which request), and making the AI Agent connector discoverable from common use-case descriptions rather than only from the connector catalog.
