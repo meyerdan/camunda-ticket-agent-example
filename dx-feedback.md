@@ -265,18 +265,22 @@ The AI Agent connector with an ad-hoc sub-process — where the agent drives the
 
 Without the dev kit, the project would have shipped with the hand-rolled loop, a direct LLM SDK dependency, and a custom `process-message.js` worker — all unnecessary complexity.
 
+Even after discovering the AI Agent connector, the **sub-flow tool pattern** required a separate hint. The "Send message and wait for reply" tool is not a single service task — it's a two-element sub-flow: a service task (sends the message) connected via sequence flow to a receive task (waits for the reply via webhook). The ad-hoc sub-process detects only root elements (nodes with no incoming sequence flows) as tools, so the agent sees one tool while BPMN executes two steps. This pattern — composing a multi-step tool from connected BPMN elements inside an ad-hoc sub-process — is undocumented and was only built because it was explicitly suggested. Without that guidance, the AI assistant had no model for how to make an agent tool "wait" for an external callback.
+
 ### Why it matters
 
 - **The problem description doesn't lead to the solution.** A developer thinking "I need a process that has a conversation with a user" will search for "BPMN conversation loop" or "message correlation patterns," not "AI Agent ad-hoc sub-process." The connector solves the problem elegantly, but you have to already know it exists.
 - **AI coding assistants are particularly affected.** They pattern-match from training data, which has abundant examples of explicit loops and very few examples of Camunda's agentic connector pattern. Without a dev kit or explicit guidance, they will consistently choose the worse architecture.
 - **The ad-hoc sub-process concept is unfamiliar.** Even developers who find the AI Agent connector docs may not understand that "tools are root elements in an ad-hoc sub-process" means they don't need a loop. The mental model shift from "explicit orchestration" to "agent-driven tool calling" needs a bridge.
+- **Sub-flow tools are a hidden power feature.** The ability to compose a tool from multiple BPMN elements (service task → receive task, or service task → gateway → multiple paths) is extremely powerful but completely undiscoverable. The "root element = tool entry point" convention is not documented, so developers assume each tool must be a single task.
 - **The manual approach works but is worse in every way.** The explicit loop required more BPMN elements, a custom worker, a direct LLM dependency, manual context management, and a "done" check gateway. The AI Agent connector eliminated all of this. But "it works" is the enemy of "there's a better way" — developers who build the loop first have little reason to discover the connector later.
 
 ### Suggestion
 
 1. **Use-case-based documentation entry points.** Add a "Building conversational processes" or "Adding AI to your process" guide that starts from the problem ("I want my process to have a back-and-forth conversation") and leads to the AI Agent connector — not buried in the connector catalog but linked from the main BPMN patterns / best practices docs.
 2. **"Before and after" examples.** Show the explicit loop pattern side-by-side with the AI Agent connector approach, making the simplification immediately visible. This validates developers who built the loop ("you're not wrong") while showing the better path.
-3. **Dev tooling that suggests the pattern.** The Camunda AI Dev Kit proved this works — when the `new-agent` skill was available, the right architecture emerged naturally. Integrating similar guidance into the Modeler (e.g., "This loop with an LLM call could be replaced by an AI Agent sub-process") or the docs would have the same effect.
+3. **Document sub-flow tools explicitly.** The pattern of composing a tool from multiple connected elements (e.g., service task → receive task for "send and wait") is one of the most powerful features of the ad-hoc sub-process, but it's completely undocumented. Add a section on "Multi-step tools" or "Sub-flow tools" to the AI Agent connector docs with examples: send-and-wait (service → catch event), conditional tools (service → gateway → paths), and enrichment chains (service → service).
+4. **Dev tooling that suggests the pattern.** The Camunda AI Dev Kit proved this works — when the `new-agent` skill was available, the right architecture emerged naturally. Integrating similar guidance into the Modeler (e.g., "This loop with an LLM call could be replaced by an AI Agent sub-process") or the docs would have the same effect.
 
 ---
 
