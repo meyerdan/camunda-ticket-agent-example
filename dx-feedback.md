@@ -16,7 +16,7 @@ Problems are ordered by severity — most urgent first.
 | 2 | Webhook path conflicts across versions | High | Fixed in alpha5 | Yes — [#3227](https://github.com/camunda/connectors/issues/3227), fixed in 8.9.0-alpha5 ([PR #6056](https://github.com/camunda/connectors/pull/6056)) |
 | 3 | Connector input contracts undocumented | High | Medium (auto-generate from templates) | No |
 | 4 | AI Agent tool I/O contract hard to figure out | High | Medium (docs + reference page) | No |
-| 5 | resultExpression failures indistinguishable from version conflicts | High | Low (logging improvement) | No |
+| 5 | resultExpression failures indistinguishable from version conflicts | High | Low (logging improvement) | Consequence of #2 — should be resolved in alpha5 |
 | 6 | Webhook connector properties undocumented | Medium | Medium (same pattern as #3) | No |
 | 7 | Enum values hidden in element templates | Medium | Low (add to docs + improve error messages) | No |
 | 8 | Duplicate message subscriptions go undetected | Medium | Low (docs + runtime warning) | By design — [documented](https://docs.camunda.io/docs/components/concepts/messages/) but surprising |
@@ -41,10 +41,9 @@ Problems are ordered by severity — most urgent first.
 The highest-leverage fixes are:
 
 1. **Make the AI Agent connector discoverable** from common use-case descriptions, with concrete sub-flow tool examples (Problem 1)
-2. **Fix webhook version conflicts** so the latest version always wins during development (Problem 2)
-3. **Publish programmatic references** for connector input contracts and webhook properties (Problems 3, 6)
-4. **Document the complete tool lifecycle** including `fromAi()`, `toolCallResult`, and webhook interaction patterns (Problem 4)
-5. **Improve connector runtime observability** — log which version handles each request (Problems 2, 5)
+2. **Publish programmatic references** for connector input contracts and webhook properties (Problems 3, 6)
+3. **Document the complete tool lifecycle** including `fromAi()`, `toolCallResult`, and webhook interaction patterns (Problem 4)
+4. **Improve connector runtime observability** — log which version handles each request (Problems 2, 5)
 
 ---
 
@@ -164,7 +163,7 @@ Later, when revisiting the webhook connector with a clean setup, we discovered t
 
 ### Suggestion
 
-This is a direct consequence of Problem 2. Fixing version priority and improving logging (showing which version handles each request) would prevent this class of misdiagnosis entirely.
+This is a direct consequence of Problem 2 and should be resolved in alpha5. The remaining suggestion: **log which connector version handles each request** — this would prevent this class of misdiagnosis even if version conflicts recur for other reasons.
 
 ---
 
@@ -345,7 +344,7 @@ After verifying each problem in the Camunda Modeler, most are **not specific to 
 
 **Would hit any developer equally hard — even in the modeler:**
 - **Problem 1 (AI Agent connector not discoverable)** — The modeler has a template browser, but if a developer is thinking "I need a conversation loop," they won't search for "AI Agent sub-process." A human might have a slight advantage through webinars, colleagues, or browsing — but that's serendipity, not discoverability.
-- **Problem 2 (webhook version conflicts)** — Silent version conflicts during iterative development affect anyone deploying multiple versions.
+- **Problem 2 (webhook version conflicts)** — Likely fixed in alpha5, but when it occurred it affected anyone deploying multiple versions equally.
 - **Problem 4 (tool I/O contract)** — The service tasks inside the ad-hoc sub-process have no element template. `fromAi()` is a raw FEEL expression manually typed into the input mapping field. The modeler does provide FEEL autocomplete — but only if you already know that `fromAi()` exists and is the function you need. There's no "tool parameter wizard," no guided form, and no indication on the input mapping panel that this is how agent tool parameters are declared. The `toolCallResult` variable name is equally undiscoverable. This problem is just as hard for a human in the modeler as it is programmatically:
 
   ![fromAi() as a raw FEEL expression in the modeler's input mapping — no guided form for tool parameters](docs/modeler-fromAi.png)
