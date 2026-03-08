@@ -4,7 +4,7 @@ An end-to-end Camunda 8 process built entirely with [Claude Code](https://claude
 
 ## What this is
 
-An experiment in AI-assisted Camunda development. The entire project — BPMN XML, workers, connector configuration, and debugging — was done through an AI coding assistant working directly with code rather than the visual BPMN modeler.
+An experiment in AI-assisted Camunda development. The entire project — BPMN XML, workers, connector configuration, and debugging — was done through an AI coding assistant working directly with code rather than the visual BPMN modeler. Built with the [Camunda AI Dev Kit](https://github.com/meyerdan/camunda-ai-dev-kit).
 
 The process:
 1. Fetches upcoming concerts in Boston from the Ticketmaster API
@@ -15,22 +15,7 @@ The process:
 
 ## Architecture
 
-```
-Timer (weekly) ──► Fetch Concerts ──► Fetch Spotify ──► Match Artists ──► Gateway
-                                                                           │
-                                                              No matches ──► End
-                                                                           │
-                                                           Matches found ──▼
-                                                        ┌──────────────────────────┐
-                                                        │  AI Agent (ad-hoc sub)   │
-                                                        │                          │
-                                                        │  Tools:                  │
-                                                        │  - Send message + wait   │
-                                                        │  - Get concert details   │
-                                                        │  - Check ticket price    │
-                                                        │  - Book tickets          │
-                                                        └──────────────────────────┘
-```
+![BPMN Process](docs/process.png)
 
 The "Send message and wait for reply" tool is a two-element sub-flow inside the ad-hoc sub-process:
 - **Service task** — sends a message to the chat UI and generates a unique correlation key
