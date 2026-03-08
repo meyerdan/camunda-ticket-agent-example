@@ -16,14 +16,13 @@ Problems are ordered by severity — most urgent first.
 | 2 | Webhook path conflicts across versions | High | Fixed in alpha5 | Yes — [#3227](https://github.com/camunda/connectors/issues/3227), fixed in 8.9.0-alpha5 ([PR #6056](https://github.com/camunda/connectors/pull/6056)) |
 | 3 | Connector input contracts undocumented | High | Medium (auto-generate from templates) | No |
 | 4 | AI Agent tool I/O contract hard to figure out | High | Medium (docs + reference page) | No |
-| 5 | resultExpression failures indistinguishable from version conflicts | High | Low (logging improvement) | Consequence of #2 — should be resolved in alpha5 |
-| 6 | Webhook connector properties undocumented | Medium | Medium (same pattern as #3) | No |
-| 7 | Enum values hidden in element templates | Medium | Low (add to docs + improve error messages) | No |
-| 8 | Duplicate message subscriptions go undetected | Medium | Low (docs + runtime warning) | By design — [documented](https://docs.camunda.io/docs/components/concepts/messages/) but surprising |
-| 9 | AI Agent Task vs Sub-process differences unclear | Medium | Low (docs improvement) | No |
-| 10 | Connector error messages obfuscated | Medium | Low (likely a bug) | No |
-| 11 | Timer processes can't be manually started | Low | Medium (engine change) | No |
-| 12 | BPMN XML ordering errors misleading | Low | Medium (validation improvement) | No |
+| 5 | Webhook connector properties undocumented | Medium | Medium (same pattern as #3) | No |
+| 6 | Enum values hidden in element templates | Medium | Low (add to docs + improve error messages) | No |
+| 7 | Duplicate message subscriptions go undetected | Medium | Low (docs + runtime warning) | By design — [documented](https://docs.camunda.io/docs/components/concepts/messages/) but surprising |
+| 8 | AI Agent Task vs Sub-process differences unclear | Medium | Low (docs improvement) | No |
+| 9 | Connector error messages obfuscated | Medium | Low (likely a bug) | No |
+| 10 | Timer processes can't be manually started | Low | Medium (engine change) | No |
+| 11 | BPMN XML ordering errors misleading | Low | Medium (validation improvement) | No |
 
 ## What the AI did vs. what required human intervention
 
@@ -41,9 +40,9 @@ Problems are ordered by severity — most urgent first.
 The highest-leverage fixes are:
 
 1. **Make the AI Agent connector discoverable** from common use-case descriptions, with concrete sub-flow tool examples (Problem 1)
-2. **Publish programmatic references** for connector input contracts and webhook properties (Problems 3, 6)
+2. **Publish programmatic references** for connector input contracts and webhook properties (Problems 3, 5)
 3. **Document the complete tool lifecycle** including `fromAi()`, `toolCallResult`, and webhook interaction patterns (Problem 4)
-4. **Improve connector runtime observability** — log which version handles each request (Problems 2, 5)
+4. **Improve connector runtime observability** — log which version handles each request (Problem 2)
 
 ---
 
@@ -139,35 +138,7 @@ The AI Agent connector's tools communicate with the agent through a specific con
 
 ---
 
-## Problem 5: Webhook connector `resultExpression` behavior is indistinguishable from version conflicts
-
-**Known issue? No.** No existing bug reports cover this scenario.
-
-### What happened
-
-While debugging the webhook connector inside an ad-hoc sub-process, the `toolCallResult` variable was always empty (`""` or `null`). We tried three different variable mapping approaches:
-
-1. `inbound.variableMapping` — variable not set
-2. `inbound.resultExpression` — variable not set
-3. `inbound.resultVariable` — variable not created
-
-We concluded that webhook connector variable mapping doesn't work inside ad-hoc sub-processes. This led to replacing the webhook connector with direct Zeebe message correlation (`POST /v2/messages/correlation`), which **did** work.
-
-Later, when revisiting the webhook connector with a clean setup, we discovered the variable mapping **does work** inside ad-hoc sub-processes. The original failures were caused by **Problem 2** — an old version's connector was handling requests, and its different configuration (different result expression, different activation condition) produced empty results. The webhook connector itself was never the issue.
-
-### Why it matters
-
-- The misdiagnosis cost hours of debugging and led to an unnecessary architectural workaround.
-- The symptom (empty variables) was attributed to the wrong root cause (ad-hoc sub-process scoping) because there was no visibility into which connector version was actually processing requests.
-- This failure mode is particularly insidious: the variable mapping appears broken, but the actual problem is a version conflict in the connector runtime.
-
-### Suggestion
-
-This is a direct consequence of Problem 2 and should be resolved in alpha5. The remaining suggestion: **log which connector version handles each request** — this would prevent this class of misdiagnosis even if version conflicts recur for other reasons.
-
----
-
-## Problem 6: No programmatic reference for webhook connector properties
+## Problem 5: No programmatic reference for webhook connector properties
 
 ### What happened
 
@@ -187,7 +158,7 @@ Apply the same "Input Reference" documentation pattern (see Problem 3) to inboun
 
 ---
 
-## Problem 7: Enum values are hidden in element template dropdowns
+## Problem 6: Enum values are hidden in element template dropdowns
 
 ### What happened
 
@@ -208,7 +179,7 @@ Similarly, `data.events.behavior` expects a specific enum format that wasn't obv
 
 ---
 
-## Problem 8: Duplicate message subscriptions go undetected
+## Problem 7: Duplicate message subscriptions go undetected
 
 **Known issue?** By design — [documented](https://docs.camunda.io/docs/components/concepts/messages/) but surprising.
 
@@ -239,7 +210,7 @@ This was resolved by implementing unique correlation keys per tool call (`${chat
 
 ---
 
-## Problem 9: AI Agent Task vs Sub-process implementation differences are unclear
+## Problem 8: AI Agent Task vs Sub-process implementation differences are unclear
 
 ### What happened
 
@@ -268,7 +239,7 @@ The documentation describes both implementations but doesn't provide a clear dif
 
 ---
 
-## Problem 10: Connector error messages are obfuscated
+## Problem 9: Connector error messages are obfuscated
 
 ### What happened
 
@@ -292,7 +263,7 @@ Investigate why connector error messages are being character-encoded this way an
 
 ---
 
-## Problem 11: Timer-only processes can't be manually started for testing
+## Problem 10: Timer-only processes can't be manually started for testing
 
 ### What happened
 
@@ -312,7 +283,7 @@ Allow `createProcessInstance` (and `c8ctl create pi`) to bypass the timer start 
 
 ---
 
-## Problem 12: BPMN XML element ordering errors are misleading
+## Problem 11: BPMN XML element ordering errors are misleading
 
 ### What happened
 
@@ -349,10 +320,9 @@ After verifying each problem in the Camunda Modeler, most are **not specific to 
 
   ![fromAi() as a raw FEEL expression in the modeler's input mapping — no guided form for tool parameters](docs/modeler-fromAi.png)
 
-- **Problem 5 (resultExpression misdiagnosis)** — The symptom (empty variables) leading to a wrong root cause (scoping bug) would mislead any developer.
-- **Problem 8 (duplicate subscriptions)** — Static correlation keys are a natural starting point for any developer. The production failure mode is the same regardless of who wrote the code.
-- **Problem 10 (obfuscated errors)** — Character-wrapped error messages are harder for everyone to read.
-- **Problem 11 (timer processes)** — Every developer needs to manually trigger timer processes during testing.
+- **Problem 7 (duplicate subscriptions)** — Static correlation keys are a natural starting point for any developer. The production failure mode is the same regardless of who wrote the code.
+- **Problem 9 (obfuscated errors)** — Character-wrapped error messages are harder for everyone to read.
+- **Problem 10 (timer processes)** — Every developer needs to manually trigger timer processes during testing.
 
 **The modeler helps, but doesn't fully solve:**
 - **Problem 3 (connector inputs undocumented)** — The modeler's properties panel abstracts binding names into labeled fields with dropdowns. A human in the modeler never needs to know `data.memory.storage.type` — but anyone working outside the modeler (CI/CD, code-first, testing, AI-assisted) has no reference:
@@ -360,17 +330,17 @@ After verifying each problem in the Camunda Modeler, most are **not specific to 
   ![AI Agent sub-process config in the modeler — labeled fields abstract away binding names](docs/modeler-agent-config.png)
   ![AI Agent prompts, memory, and output mapping in the modeler](docs/modeler-agent-prompts.png)
 
-- **Problem 6 (webhook properties)** — The modeler shows labeled fields ("Webhook ID", "Correlation key (process)") that map to undocumented `zeebe:property` names. The modeler abstracts this, but anyone configuring webhooks programmatically must discover the property names independently:
+- **Problem 5 (webhook properties)** — The modeler shows labeled fields ("Webhook ID", "Correlation key (process)") that map to undocumented `zeebe:property` names. The modeler abstracts this, but anyone configuring webhooks programmatically must discover the property names independently:
 
   ![Webhook connector properties panel — labeled fields, but underlying property names are undocumented](docs/modeler-webhook.png)
 
-- **Problem 7 (enum values)** — A human in the modeler sees dropdowns (e.g., "In Process (part of agent context)" for memory storage type). Anyone else has to find the element template JSON.
-- **Problem 9 (Task vs Sub-process)** — The modeler's template selector helps guide the choice, but the docs remain confusing.
-- **Problem 12 (XML ordering)** — Only affects programmatic BPMN generation. The modeler handles ordering automatically.
+- **Problem 6 (enum values)** — A human in the modeler sees dropdowns (e.g., "In Process (part of agent context)" for memory storage type). Anyone else has to find the element template JSON.
+- **Problem 8 (Task vs Sub-process)** — The modeler's template selector helps guide the choice, but the docs remain confusing.
+- **Problem 11 (XML ordering)** — Only affects programmatic BPMN generation. The modeler handles ordering automatically.
 
 ### The real takeaway
 
-**8 out of 12 problems would hit any developer equally hard, even with the visual modeler.** The modeler fully solves only 4 problems (connector input naming, webhook property naming, enum values, and XML ordering) — and only for developers who use it. For the remaining 8, the modeler provides no meaningful advantage.
+**7 out of 11 problems would hit any developer equally hard, even with the visual modeler.** The modeler fully solves only 4 problems (connector input naming, webhook property naming, enum values, and XML ordering) — and only for developers who use it. For the remaining 7, the modeler provides no meaningful advantage.
 
 The problems are not primarily about "code-first vs. modeler" — they're about **documentation, observability, and discoverability gaps that exist regardless of tooling**. The AI Agent tool I/O contract (`fromAi()`, `toolCallResult`) is equally opaque in the modeler as it is in raw XML. Webhook version conflicts are invisible in both. Duplicate message subscriptions go undetected in both. The AI Agent connector is hard to discover in both.
 

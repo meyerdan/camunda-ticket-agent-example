@@ -106,7 +106,7 @@ dx-feedback.md            # Developer experience findings
 
 ## DX findings
 
-Building this project surfaced 12 developer experience issues with Camunda 8 when working outside the visual modeler. See [`dx-feedback.md`](dx-feedback.md) for the full writeup, including:
+Building this project surfaced 11 developer experience issues with Camunda 8 when working outside the visual modeler. See [`dx-feedback.md`](dx-feedback.md) for the full writeup, including:
 
 - Undocumented connector input contracts and webhook properties
 - Webhook connector version conflicts during iterative development
