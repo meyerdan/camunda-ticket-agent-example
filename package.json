@@ -6,7 +6,9 @@
   "scripts": {
     "workers": "node workers/index.js",
     "chat": "node workers/chat-server.js",
-    "dev": "node --watch workers/index.js"
+    "dev": "node --watch workers/index.js",
+    "test": "node --test 'tests/unit/*.test.js'",
+    "test:integration": "node --test 'tests/integration/*.test.js'"
   },
   "dependencies": {
     "@camunda8/sdk": "^8.8.0"
