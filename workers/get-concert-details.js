@@ -2,6 +2,8 @@
 // Receives `concertName` from the agent via fromAi().
 // Returns details as `toolCallResult`.
 
+import { findConcert, listNames } from './lib/find-concert.js';
+
 export function registerGetConcertDetails(zeebe) {
   zeebe.createWorker({
     taskType: 'get-concert-details',
@@ -43,33 +45,7 @@ export function registerGetConcertDetails(zeebe) {
   });
 }
 
-function findConcert(concerts, name) {
-  if (!concerts || !name) return null;
-  const lower = name.toLowerCase().trim();
-
-  // Try exact-ish match first, then partial
-  return (
-    concerts.find((c) => (c.name || '').toLowerCase() === lower) ||
-    concerts.find((c) => {
-      const concertName = (c.name || '').toLowerCase();
-      return concertName.includes(lower) || lower.includes(concertName);
-    }) ||
-    // Also try matching by performer name
-    concerts.find((c) => {
-      const performers = c.performers || c._embedded?.attractions || [];
-      return performers.some((p) => {
-        const pName = (typeof p === 'string' ? p : p.name || '').toLowerCase();
-        return pName.includes(lower) || lower.includes(pName);
-      });
-    })
-  );
-}
-
-function listNames(concerts) {
-  return (concerts || []).map((c) => c.name || 'Unknown');
-}
-
-function formatAddress(venue) {
+export function formatAddress(venue) {
   if (!venue) return 'Address not available';
   const parts = [
     venue.address?.line1,
@@ -80,7 +56,7 @@ function formatAddress(venue) {
   return parts.join(', ') || 'Address not available';
 }
 
-function formatPriceRange(priceRanges) {
+export function formatPriceRange(priceRanges) {
   if (!priceRanges || priceRanges.length === 0) return 'Price not available';
   return priceRanges
     .map((pr) => `$${pr.min}-$${pr.max} ${pr.currency || 'USD'} (${pr.type || 'standard'})`)
