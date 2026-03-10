@@ -1,7 +1,10 @@
 // Lightweight Node.js DSL runner that interprets CPT DSL JSON scenarios.
-// Translates DSL instructions into Camunda REST API / SDK calls.
+// Translates DSL instructions into Camunda 8 REST API calls via @camunda8/sdk.
 //
-// Supports only the instruction types used in our scenarios:
+// Uses searchElementInstances and searchVariables (available since 8.9 alpha)
+// for real assertions instead of time-based stubs.
+//
+// Supports:
 //   - MOCK_JOB_WORKER_COMPLETE_JOB
 //   - CREATE_PROCESS_INSTANCE
 //   - ASSERT_ELEMENT_INSTANCES
@@ -26,11 +29,22 @@ async function waitFor(fn, { timeout = 30_000, interval = 500 } = {}) {
   throw lastError || new Error(`waitFor timed out after ${timeout}ms`);
 }
 
+function mapState(dslState) {
+  switch (dslState) {
+    case 'IS_ACTIVE': return 'ACTIVE';
+    case 'IS_COMPLETED': return 'COMPLETED';
+    case 'IS_COMPLETED_IN_ORDER': return 'COMPLETED';
+    case 'IS_TERMINATED': return 'TERMINATED';
+    case 'IS_CREATED': return 'ACTIVE';
+    default: return dslState;
+  }
+}
+
 /**
  * Run a single test case from a DSL scenario.
  *
  * @param {object} testCase         - { name, description, instructions }
- * @param {object} restClient       - CamundaRestClient from @camunda8/sdk
+ * @param {object} restClient       - CamundaRestClient from @camunda8/sdk (8.9+)
  * @param {object} zeebeClient      - ZeebeGrpcApiClient from @camunda8/sdk
  * @returns {Promise<{ workers: object[] }>}  Created workers (caller should close them)
  */
@@ -65,53 +79,59 @@ export async function runTestCase(testCase, restClient, zeebeClient) {
 
         const expectedState = mapState(instruction.state);
         await waitFor(async () => {
-          try {
-            const instance = await restClient.getProcessInstance(processInstanceKey);
-            return instance.state === expectedState;
-          } catch {
-            return false;
-          }
+          const { items } = await restClient.searchProcessInstances({
+            filter: { processInstanceKey },
+          });
+          return items?.[0]?.state === expectedState;
         });
         break;
       }
 
       case 'ASSERT_ELEMENT_INSTANCES': {
         assert.ok(processInstanceKey, 'No process instance for element assertion');
-        const elements = instruction.elementSelectors.map((s) => s.elementId || s.elementName);
-        const state = instruction.state;
+        const elementIds = instruction.elementSelectors.map((s) => s.elementId || s.elementName);
+        const expectedState = mapState(instruction.state);
 
-        // For IS_NOT_ACTIVATED, just verify elements haven't appeared
-        if (state === 'IS_NOT_ACTIVATED') {
-          // Brief wait for the engine to settle
+        if (instruction.state === 'IS_NOT_ACTIVATED') {
+          // Wait briefly for the engine to settle, then verify no matching elements exist
           await new Promise((r) => setTimeout(r, 2000));
-          // We can't easily query element instances via REST API in C8 Run,
-          // so we log a warning and skip this assertion in the Node.js runner
-          console.log(
-            `  [dsl-runner] WARN: IS_NOT_ACTIVATED assertion for [${elements.join(', ')}] — skipped (not queryable via REST)`
-          );
+          for (const elementId of elementIds) {
+            const { items } = await restClient.searchElementInstances({
+              filter: { processInstanceKey, elementId },
+            });
+            assert.equal(
+              items?.length ?? 0,
+              0,
+              `Expected element "${elementId}" to NOT be activated, but found ${items?.length} instance(s)`
+            );
+          }
           break;
         }
 
-        // For IS_ACTIVE or IS_COMPLETED, wait until the elements reach the expected state
-        if (state === 'IS_ACTIVE' || state === 'IS_COMPLETED' || state === 'IS_COMPLETED_IN_ORDER') {
-          // Wait a bit for the engine to process
-          await new Promise((r) => setTimeout(r, 3000));
-          console.log(
-            `  [dsl-runner] Asserted ${state} for [${elements.join(', ')}] (based on process state)`
-          );
+        // For IS_ACTIVE, IS_COMPLETED, IS_COMPLETED_IN_ORDER — poll until all elements reach the expected state
+        for (const elementId of elementIds) {
+          await waitFor(async () => {
+            const { items } = await restClient.searchElementInstances({
+              filter: { processInstanceKey, elementId, state: expectedState },
+            });
+            return items?.length > 0;
+          }, { timeout: 30_000 });
         }
         break;
       }
 
       case 'ASSERT_VARIABLES': {
         assert.ok(processInstanceKey, 'No process instance for variable assertion');
-        // Wait for the process to have progressed
-        await new Promise((r) => setTimeout(r, 2000));
 
         if (instruction.variableNames) {
-          console.log(
-            `  [dsl-runner] Variable names assertion: [${instruction.variableNames.join(', ')}] (verified via process state)`
-          );
+          // Poll until all expected variables exist on the process instance
+          await waitFor(async () => {
+            const { items } = await restClient.searchVariables({
+              filter: { processInstanceKey },
+            });
+            const varNames = new Set(items?.map((v) => v.name) ?? []);
+            return instruction.variableNames.every((n) => varNames.has(n));
+          }, { timeout: 30_000 });
         }
         break;
       }
@@ -122,14 +142,4 @@ export async function runTestCase(testCase, restClient, zeebeClient) {
   }
 
   return { workers };
-}
-
-function mapState(dslState) {
-  switch (dslState) {
-    case 'IS_ACTIVE': return 'ACTIVE';
-    case 'IS_COMPLETED': return 'COMPLETED';
-    case 'IS_TERMINATED': return 'TERMINATED';
-    case 'IS_CREATED': return 'ACTIVE';
-    default: return dslState;
-  }
 }

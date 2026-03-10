@@ -11,7 +11,7 @@
     "test:integration": "node --test 'tests/integration/*.test.js'"
   },
   "dependencies": {
-    "@camunda8/sdk": "^8.8.0"
+    "@camunda8/sdk": "^8.9.0-alpha.3"
   },
   "engines": {
     "node": ">=22.18"

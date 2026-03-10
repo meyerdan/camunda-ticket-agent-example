@@ -1,10 +1,10 @@
-// Idiomatic integration test using @camunda8/sdk directly.
+// Idiomatic integration test using @camunda8/sdk 8.9 alpha.
+// Uses searchElementInstances and searchVariables for real assertions.
 // Requires C8 Run on localhost:8080 (or ZEEBE_REST_ADDRESS env var).
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { Camunda8 } from '@camunda8/sdk';
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const BPMN_PATH = resolve(import.meta.dirname, '../../resources/concerts-agent.bpmn');
@@ -75,18 +75,25 @@ describe('Integration: concerts-agent process', () => {
 
     assert.ok(processInstanceKey, 'Process instance created');
 
-    // Wait for process to complete
+    // Wait for process to complete via searchProcessInstances
     await waitFor(async () => {
-      try {
-        const instance = await client.getProcessInstance(processInstanceKey);
-        return instance.state === 'COMPLETED';
-      } catch {
-        return false;
-      }
+      const { items } = await client.searchProcessInstances({
+        filter: { processInstanceKey },
+      });
+      return items?.[0]?.state === 'COMPLETED';
     });
 
-    // If we get here, the process completed successfully via the no-matches path
-    assert.ok(true, 'Process completed via no-matches path');
+    // Verify End_NoMatches was reached via searchElementInstances
+    const { items: endElements } = await client.searchElementInstances({
+      filter: { processInstanceKey, elementId: 'End_NoMatches', state: 'COMPLETED' },
+    });
+    assert.ok(endElements?.length > 0, 'End_NoMatches element completed');
+
+    // Verify AgentTools sub-process was never activated
+    const { items: agentElements } = await client.searchElementInstances({
+      filter: { processInstanceKey, elementId: 'AgentTools' },
+    });
+    assert.equal(agentElements?.length ?? 0, 0, 'AgentTools sub-process was not activated');
   });
 
   it('happy path → agent sub-process activates with matched concerts', async () => {
@@ -132,18 +139,32 @@ describe('Integration: concerts-agent process', () => {
 
     assert.ok(processInstanceKey, 'Process instance created');
 
-    // Wait for the agent sub-process to be active (process won't complete
-    // because the ad-hoc sub-process has an internal orchestration loop)
+    // Wait for service tasks to complete via searchElementInstances
+    for (const elementId of ['Task_FetchConcerts', 'Task_FetchSpotify', 'Task_MatchArtists']) {
+      await waitFor(async () => {
+        const { items } = await client.searchElementInstances({
+          filter: { processInstanceKey, elementId, state: 'COMPLETED' },
+        });
+        return items?.length > 0;
+      });
+    }
+
+    // Verify AgentTools sub-process is active
     await waitFor(async () => {
-      try {
-        const instance = await client.getProcessInstance(processInstanceKey);
-        // Process should be ACTIVE (agent sub-process running)
-        return instance.state === 'ACTIVE';
-      } catch {
-        return false;
-      }
+      const { items } = await client.searchElementInstances({
+        filter: { processInstanceKey, elementId: 'AgentTools', state: 'ACTIVE' },
+      });
+      return items?.length > 0;
     });
 
-    assert.ok(true, 'Process is active with agent sub-process');
+    // Verify expected variables exist via searchVariables
+    await waitFor(async () => {
+      const { items } = await client.searchVariables({
+        filter: { processInstanceKey },
+      });
+      const varNames = new Set(items?.map((v) => v.name) ?? []);
+      return ['matchedConcerts', 'concertResultsDoc', 'spotifyArtistsDoc']
+        .every((n) => varNames.has(n));
+    });
   });
 });
