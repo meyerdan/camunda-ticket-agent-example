@@ -2,6 +2,8 @@
 // Receives `concertName` from the agent via fromAi().
 // Returns pricing info as `toolCallResult`.
 
+import { findConcert } from './lib/find-concert.js';
+
 export function registerCheckTicketPrice(zeebe) {
   zeebe.createWorker({
     taskType: 'check-ticket-price',
@@ -46,24 +48,4 @@ export function registerCheckTicketPrice(zeebe) {
       return job.complete({ toolCallResult: JSON.stringify(pricing) });
     },
   });
-}
-
-function findConcert(concerts, name) {
-  if (!concerts || !name) return null;
-  const lower = name.toLowerCase().trim();
-
-  return (
-    concerts.find((c) => (c.name || '').toLowerCase() === lower) ||
-    concerts.find((c) => {
-      const concertName = (c.name || '').toLowerCase();
-      return concertName.includes(lower) || lower.includes(concertName);
-    }) ||
-    concerts.find((c) => {
-      const performers = c.performers || c._embedded?.attractions || [];
-      return performers.some((p) => {
-        const pName = (typeof p === 'string' ? p : p.name || '').toLowerCase();
-        return pName.includes(lower) || lower.includes(pName);
-      });
-    })
-  );
 }

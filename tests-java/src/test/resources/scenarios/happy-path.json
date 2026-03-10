@@ -1,0 +1,132 @@
+{
+  "testCases": [
+    {
+      "name": "No matches → process ends",
+      "description": "When match-artists finds no overlap between concert performers and Spotify library, the process takes the 'no matches' path and ends.",
+      "instructions": [
+        {
+          "type": "MOCK_JOB_WORKER_COMPLETE_JOB",
+          "jobType": "fetch-concerts",
+          "variables": {
+            "concertResultsDoc": { "documentId": "doc-concerts", "contentHash": "hash-1" }
+          }
+        },
+        {
+          "type": "MOCK_JOB_WORKER_COMPLETE_JOB",
+          "jobType": "fetch-spotify",
+          "variables": {
+            "spotifyArtistsDoc": { "documentId": "doc-spotify", "contentHash": "hash-2" }
+          }
+        },
+        {
+          "type": "MOCK_JOB_WORKER_COMPLETE_JOB",
+          "jobType": "match-artists",
+          "variables": {
+            "matchedConcerts": []
+          }
+        },
+        {
+          "type": "CREATE_PROCESS_INSTANCE",
+          "processDefinitionSelector": {
+            "processDefinitionId": "concerts-agent"
+          }
+        },
+        {
+          "type": "ASSERT_ELEMENT_INSTANCES",
+          "processInstanceSelector": { "processDefinitionId": "concerts-agent" },
+          "elementSelectors": [
+            { "elementId": "Task_FetchConcerts" },
+            { "elementId": "Task_FetchSpotify" },
+            { "elementId": "Task_MatchArtists" },
+            { "elementId": "End_NoMatches" }
+          ],
+          "state": "IS_COMPLETED"
+        },
+        {
+          "type": "ASSERT_ELEMENT_INSTANCES",
+          "processInstanceSelector": { "processDefinitionId": "concerts-agent" },
+          "elementSelectors": [
+            { "elementId": "AgentTools" }
+          ],
+          "state": "IS_NOT_ACTIVATED"
+        },
+        {
+          "type": "ASSERT_PROCESS_INSTANCE",
+          "processInstanceSelector": { "processDefinitionId": "concerts-agent" },
+          "state": "IS_COMPLETED"
+        }
+      ]
+    },
+    {
+      "name": "Happy path → agent sub-process activates",
+      "description": "When matched concerts are found, the process routes to the AI Agent ad-hoc sub-process.",
+      "instructions": [
+        {
+          "type": "MOCK_JOB_WORKER_COMPLETE_JOB",
+          "jobType": "fetch-concerts",
+          "variables": {
+            "concertResultsDoc": { "documentId": "doc-concerts", "contentHash": "hash-1" }
+          }
+        },
+        {
+          "type": "MOCK_JOB_WORKER_COMPLETE_JOB",
+          "jobType": "fetch-spotify",
+          "variables": {
+            "spotifyArtistsDoc": { "documentId": "doc-spotify", "contentHash": "hash-2" }
+          }
+        },
+        {
+          "type": "MOCK_JOB_WORKER_COMPLETE_JOB",
+          "jobType": "match-artists",
+          "variables": {
+            "matchedConcerts": [
+              {
+                "name": "Radiohead at TD Garden",
+                "matchedArtists": ["Radiohead"],
+                "url": "https://www.ticketmaster.com/event/evt-001"
+              },
+              {
+                "name": "Taylor Swift | The Eras Tour",
+                "matchedArtists": ["Taylor Swift"],
+                "url": "https://www.ticketmaster.com/event/evt-002"
+              }
+            ]
+          }
+        },
+        {
+          "type": "MOCK_JOB_WORKER_COMPLETE_JOB",
+          "jobType": "io.camunda.agenticai:aiagent-job-worker:1"
+        },
+        {
+          "type": "CREATE_PROCESS_INSTANCE",
+          "processDefinitionSelector": {
+            "processDefinitionId": "concerts-agent"
+          }
+        },
+        {
+          "type": "ASSERT_ELEMENT_INSTANCES",
+          "processInstanceSelector": { "processDefinitionId": "concerts-agent" },
+          "elementSelectors": [
+            { "elementId": "Task_FetchConcerts" },
+            { "elementId": "Task_FetchSpotify" },
+            { "elementId": "Task_MatchArtists" }
+          ],
+          "state": "IS_COMPLETED"
+        },
+        {
+          "type": "ASSERT_ELEMENT_INSTANCES",
+          "processInstanceSelector": { "processDefinitionId": "concerts-agent" },
+          "elementSelectors": [
+            { "elementId": "AgentTools" }
+          ],
+          "state": "IS_ACTIVE"
+        },
+        {
+          "type": "ASSERT_VARIABLES",
+          "processInstanceSelector": { "processDefinitionId": "concerts-agent" },
+          "variableNames": ["matchedConcerts", "concertResultsDoc", "spotifyArtistsDoc"]
+        }
+      ]
+    }
+  ]
+}

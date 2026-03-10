@@ -6,6 +6,8 @@
 // a deep link to the Ticketmaster purchase page. A real integration could use
 // a partner API or redirect the user via the WhatsApp message.
 
+import { findConcert } from './lib/find-concert.js';
+
 export function registerBookTickets(zeebe) {
   zeebe.createWorker({
     taskType: 'book-tickets',
@@ -46,27 +48,7 @@ export function registerBookTickets(zeebe) {
   });
 }
 
-function findConcert(concerts, name) {
-  if (!concerts || !name) return null;
-  const lower = name.toLowerCase().trim();
-
-  return (
-    concerts.find((c) => (c.name || '').toLowerCase() === lower) ||
-    concerts.find((c) => {
-      const concertName = (c.name || '').toLowerCase();
-      return concertName.includes(lower) || lower.includes(concertName);
-    }) ||
-    concerts.find((c) => {
-      const performers = c.performers || c._embedded?.attractions || [];
-      return performers.some((p) => {
-        const pName = (typeof p === 'string' ? p : p.name || '').toLowerCase();
-        return pName.includes(lower) || lower.includes(pName);
-      });
-    })
-  );
-}
-
-function formatPriceRange(priceRanges) {
+export function formatPriceRange(priceRanges) {
   if (!priceRanges || priceRanges.length === 0) return 'Price not available';
   return priceRanges
     .map((pr) => `$${pr.min}-$${pr.max} ${pr.currency || 'USD'}`)

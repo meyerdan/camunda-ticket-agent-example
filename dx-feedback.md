@@ -6,6 +6,8 @@ I built an end-to-end Camunda 8 process using Claude Code as an AI coding assist
 
 This is relevant because AI-assisted development is becoming a primary way developers build software. Claude Code writes BPMN XML, configures connectors, and iterates on errors — much like a developer would using the Modeler, but programmatically. The friction points below are amplified for AI assistants but affect any developer working outside the visual modeler (CI/CD pipelines, IaC, code-first BPMN generation, testing frameworks).
 
+---
+
 ## Summary
 
 Problems are ordered by severity — most urgent first.
@@ -16,6 +18,10 @@ Problems are ordered by severity — most urgent first.
 | 2 | Webhook path conflicts across versions | High | Fixed in alpha5 | Yes — [#3227](https://github.com/camunda/connectors/issues/3227), fixed in 8.9.0-alpha5 ([PR #6056](https://github.com/camunda/connectors/pull/6056)) |
 | 3 | Connector input contracts undocumented | High | Medium (auto-generate from templates) | No |
 | 4 | AI Agent tool I/O contract hard to figure out | High | Medium (docs + reference page) | No |
+| 4.1 | Testing: No DSL generator | High | Medium? | Assumed, but no ProductHub issues found |
+| 4.2 | Testing: Element instance + variable search APIs not discoverable | Medium | Low (docs + SDK) | Partially resolved — `@camunda8/sdk` 8.9.0-alpha.3 added typed methods; docs gap remains |
+| 4.3 | Testing: No way to mock ad-hoc sub-process completion | High | Medium (CPT API addition) | Yes — [#3315](https://github.com/camunda/product-hub/issues/3315) |
+| 4.4 | Testing: No CPT-equivalent for non-Java API clients | Medium | High (new packages per SDK) | No - yet [Josh has already triaged that](https://github.com/jwulf/camunda-process-test-js)  |
 | 5 | Webhook connector properties undocumented | Medium | Medium (same pattern as #3) | No |
 | 6 | Enum values hidden in element templates | Medium | Low (add to docs + improve error messages) | No |
 | 7 | Duplicate message subscriptions go undetected | Medium | Low (docs + runtime warning) | By design — [documented](https://docs.camunda.io/docs/components/concepts/messages/) but surprising |
@@ -23,6 +29,7 @@ Problems are ordered by severity — most urgent first.
 | 9 | Connector error messages obfuscated | Medium | Low (likely a bug) | No |
 | 10 | Timer processes can't be manually started | Low | Medium (engine change) | No |
 | 11 | BPMN XML ordering errors misleading | Low | Medium (validation improvement) | No |
+
 
 ## What the AI did vs. what required human intervention
 
@@ -43,6 +50,74 @@ The highest-leverage fixes are:
 2. **Publish programmatic references** for connector input contracts and webhook properties (Problems 3, 5)
 3. **Document the complete tool lifecycle** including `fromAi()`, `toolCallResult`, and webhook interaction patterns (Problem 4)
 4. **Improve connector runtime observability** — log which version handles each request (Problem 2)
+
+---
+
+
+## Testing DX Assessment
+
+### What was built
+
+Dual-language tests for the concerts-agent process to compare Java and Node.js testing DX:
+
+| Dimension | Node.js | Java (CPT) |
+|-----------|---------|------------|
+| **Unit tests** | 48 tests across 6 files | N/A (workers are JS — no Java unit tests for worker logic) |
+| **Integration tests** | 2 idiomatic SDK tests + 2 DSL-driven tests | 3 CPT tests + 2 DSL scenario tests (via `@TestScenarioSource`, 8.9.0-alpha5) |
+| **Test runner** | `node:test` (built-in, zero deps) | JUnit 6 + Surefire 3.5.5 + Testcontainers (via CPT) |
+| **BPMN process testing** | REST API search endpoints (`searchElementInstances`, `searchVariables`) + polling | `@CamundaProcessTest` with rich assertion API |
+| **Framework overhead** | 0 new dependencies for unit tests | Separate Maven project with ~10 transitive dependencies |
+| **Test execution wall time** | Unit: ~80ms / Integration: needs C8 Run | ~46s for 5 tests (includes Testcontainers container startup) |
+
+### Setup Effort
+
+| | Node.js | Java (CPT) |
+|---|---------|------------|
+| **Unit tests** | Zero setup — `node --test` is built-in. Add `"test"` script to package.json. | Would need: new Maven project, Spring Boot config, build plugins — but not applicable since workers are JS. |
+| **Integration tests** | Requires C8 Run already running. SDK already a project dependency. | Add `pom.xml` with `camunda-process-test-java`, JUnit 6, surefire 3.5.5. CPT auto-starts Docker container. |
+| **First-run friction** | none: `node --test 'tests/unit/*.test.js'`. | CPT 8.9.0-alpha5 pulls JUnit 6.0.3 — a major version jump from JUnit 5. Surefire 3.5.5 is required; earlier 3.5.x versions fail with `OutputDirectoryProvider` errors. This version alignment is not documented. |
+| **Zeebe resources (BPMN, DMN, Forms) file access** | Direct `import.meta.dirname` resolution — works naturally. | Copy Zeebe resources to `src/test/resources/` (Maven convention). |
+
+### Test Authoring
+
+| | Node.js | Java (CPT) |
+|---|---------|------------|
+| **Unit test ergonomics** | `node:test` + `node:assert` are minimal, fast, zero-config. Mock API (`mock.fn()`) is adequate. | N/A — worker logic is in JS. |
+| **Process test assertions** | `searchProcessInstances` for state, `searchElementInstances` for per-element state, `searchVariables` for variable values — all with polling. Comparable assertions to CPT but verbose. | Rich: `assertThat(processInstance).hasCompletedElements("A", "B").isCompleted()`. Auto-waits with timeout. |
+| **Mock workers** | SDK's `createWorker()` with inline handlers. Must manage worker lifecycle manually (close after test). | `processTestContext.mockJobWorker("type").thenComplete(vars)`. Auto-cleaned per test. |
+| **Gateway/routing verification** | `searchElementInstances` with `elementId` + `state` filter verifies which elements were activated/completed. Can also check `searchVariables` for routing-dependent data. | Can assert on specific elements: `hasActiveElements("AgentTools")`, `hasNotActivatedElements("End_NoMatches")`. |
+
+**Verdict:** Java CPT has more ergonomic process-level assertions (fluent API, auto-wait). Node.js can now achieve equivalent assertion coverage via the 8.9 alpha SDK's `searchElementInstances` and `searchVariables` search methods, but requires more boilerplate (manual polling loops, explicit filter construction).
+
+### DSL Comparison
+
+| | Node.js | Java (CPT) |
+|---|---------|------------|
+| **Runner** | Custom `dsl-runner.js` (~120 lines) interprets JSON → SDK calls. | Built-in `TestScenarioRunner` + `@TestScenarioSource` annotation. |
+| **Scenario file** | Shared `tests/scenarios/happy-path.json` | Same JSON copied to `src/test/resources/scenarios/` |
+| **Feature coverage** | 5 instruction types with full assertions: `searchElementInstances` for element state, `searchVariables` for variable existence, `searchProcessInstances` for process state. | All 25 instruction types. Full element-level assertions. |
+| **Availability** | Works now with `@camunda8/sdk` 8.9.0-alpha.3 (custom runner). | Works with CPT 8.9.0-alpha5. `TestScenarioRunner` is auto-injected by `@CamundaProcessTest`. |
+
+**Verdict:** The shared JSON scenario approach works well — the same `happy-path.json` drives both runners. Java's built-in `@TestScenarioSource` + `TestScenarioRunner` is zero-code (just `testScenarioRunner.run(testCase)`); Node.js needs a custom runner (~120 lines) but can now implement full assertions using the 8.9 alpha SDK's `searchElementInstances`, `searchVariables`, and `searchProcessInstances` methods. The remaining gap is instruction type coverage (5 vs 25) — the Node.js runner only implements the types used in our scenarios.
+
+### Ad-Hoc Sub-Process Testing
+
+The AI Agent ad-hoc sub-process was the main testing challenge in both languages:
+
+- **Java CPT:** `mockJobWorker("io.camunda.agenticai:aiagent-job-worker:1").thenComplete()` activates the sub-process but doesn't complete it — the orchestration loop keeps creating new jobs. Test adjusted to assert `hasActiveElements("AgentTools")` instead of full completion.
+- **Node.js:** Same limitation. Mock worker completes individual jobs but can't signal the end of the agent's conversation loop. Asserted via `searchElementInstances({ filter: { processInstanceKey, elementId: 'AgentTools', state: 'ACTIVE' } })`.
+- **Root cause:** The agentic connector's internal loop semantics aren't exposed for testing. You can't tell either framework "the agent is done, close the sub-process."
+
+### Integration Test Infrastructure
+
+| | Node.js | Java (CPT) |
+|---|---------|------------|
+| **Engine** | External: requires C8 Run already running on localhost:8080 | Embedded: Testcontainers auto-starts a Camunda Docker container |
+| **Isolation** | Shared engine state between test runs (risk of interference) | Clean engine per test class (container recycled, data purged per test) |
+| **CI/CD** | Need to start C8 Run before tests, or use Docker Compose | Just Docker — `mvn test` handles everything |
+| **Coverage reports** | None built-in | CPT generates BPMN coverage report (we got 50% for our test) |
+
+**Verdict:** Java CPT's self-contained testing (Testcontainers + auto-cleanup + coverage) is significantly more mature for CI/CD. Node.js integration tests require manual orchestration.
 
 ---
 
@@ -137,6 +212,128 @@ The AI Agent connector's tools communicate with the agent through a specific con
 3. **Add `fromAi()` to the FEEL function reference** with its full signature, valid types, and examples.
 
 ---
+
+## Problem 4.1: No DSL scenario generator — the "test gap" between BPMN and JSON
+
+### What happened
+
+The CPT DSL (`@TestScenarioSource` + `TestScenarioRunner`) lets you write test scenarios as JSON and run them in any language. But **there is no tool to generate these JSON scenarios** — not from BPMN files, not from existing Java tests, not from process execution traces. The codebase has a `TestScenarioReader` (deserializes JSON) and a `TestScenarioRunner` (executes test cases), but no `TestScenarioWriter` or generator of any kind.
+
+To create our `happy-path.json`, I had to:
+1. Read the BPMN process to understand the element IDs, job types, and flow routing
+2. Read the CPT DSL source code in the camunda repo to learn the 25 supported instruction types, selector field names, and state enum values (`IS_COMPLETED`, `IS_NOT_ACTIVATED`, `IS_ACTIVE`, etc.)
+3. Study the JSON Schema file (`test-scenario-dsl.schema.json`) for structural validation
+4. Manually translate the hand-written `ProcessFlowTest.java` tests — mapping `mockJobWorker()` calls to `MOCK_JOB_WORKER_COMPLETE_JOB` instructions, `createInstanceCommand` to `CREATE_PROCESS_INSTANCE`, and `assertThat()` chains to `ASSERT_ELEMENT_INSTANCES` / `ASSERT_PROCESS_INSTANCE`
+5. Get the instruction ordering right — mocks must come before `CREATE_PROCESS_INSTANCE`, assertions after
+
+The official docs acknowledge this gap and recommend: *"Use AI to support the generation of your test scenario DSL files. Provide the JSON schema, a description of your test case, and your BPMN processes to get a first draft."* This is practical advice, but it means the developer (or AI assistant) must discover the schema, understand all instruction types, and manually validate the output — there's no feedback loop shorter than running the actual test.
+
+### Why it matters
+
+- **The DSL's main value proposition is cross-language test sharing**, but the authoring cost is high enough to discourage adoption. Writing equivalent Java tests with `mockJobWorker()` and `assertThat()` is faster and gives better IDE support (type checking, autocompletion). Developers will default to the imperative Java API unless the declarative JSON is easier to produce.
+- **BPMN files contain most of the information needed.** Element IDs, job types (`zeebe:taskDefinition`), message names, and sequence flow routing are all in the XML. A generator could produce a skeleton scenario (mock all service tasks, create instance, assert completion) that the developer then fills in with test data.
+- **The Immutables Builder API exists but isn't exposed.** The CPT codebase has `ImmutableTestScenario.builder()` and `ImmutableTestCase.builder()` for programmatically constructing scenarios in Java (used internally for testing). A `TestScenarioWriter` that serializes these to JSON would close the loop — write tests in Java with IDE support, export to JSON for cross-language use.
+- **AI coding assistants need a schema to generate reliably.** The docs recommend using AI, but the JSON Schema alone isn't enough context. The AI also needs to know instruction ordering rules (mocks before instance creation), which selectors apply to which instructions, and which state enums are valid for which assertion types. A generator or at minimum a well-documented "scenario cookbook" would make AI generation much more reliable.
+
+### Suggestion
+
+1. **Build a BPMN → scenario skeleton generator.** Given a BPMN file, produce a JSON scenario with `MOCK_JOB_WORKER_COMPLETE_JOB` for each service task, `CREATE_PROCESS_INSTANCE`, and `ASSERT_PROCESS_INSTANCE` with `IS_COMPLETED`. The developer fills in variables and adds specific assertions. This could be a Maven plugin (`mvn camunda:generate-test-scenario`), a CLI tool (`c8ctl` plugin!), or a Modeler feature.
+2. **Add a `TestScenarioWriter`** that serializes `TestScenario` objects to JSON. This enables a Java-first workflow: write scenarios with IDE autocompletion using the builder API, export to JSON for polyglot use. The building blocks (Immutables builders + Jackson) already exist.
+3. **Publish a "Scenario Cookbook"** with annotated examples for common patterns: service task pipelines, exclusive gateways, message correlation, ad-hoc sub-processes, timer events. Each example should show the BPMN pattern, the resulting JSON scenario, and explain the instruction ordering.
+
+---
+
+## Problem 4.2: Element instance and variable search APIs exist but are not discoverable for testing
+
+### What happened
+
+When building the Node.js integration tests and the custom DSL runner (`dsl-runner.js`), I needed to assert which BPMN elements had been activated, completed, or terminated during a process instance execution. Java CPT can do this natively — `assertThat(processInstance).hasCompletedElements("Task_FetchConcerts", "Task_FetchSpotify")` works because CPT has direct access to the engine's internal state via the embedded Testcontainers runtime.
+
+The V2 REST API already has the endpoints needed, and the `@camunda8/sdk` 8.9.0-alpha.3 exposes them as typed methods:
+
+| Method | Path | SDK method (8.9 alpha) | What it does |
+|--------|------|------------------------|--------------|
+| `POST` | `/v2/element-instances/search` | `searchElementInstances()` | Search element instances by `processInstanceKey`, `state`, `elementId`, `type`, etc. |
+| `GET` | `/v2/element-instances/{key}` | — | Get a single element instance by key |
+| `POST` | `/v2/variables/search` | `searchVariables()` | Search variables by `processInstanceKey`, `scopeKey`, `name` |
+| `GET` | `/v2/variables/{key}` | — | Get a single variable (full value) |
+| `GET` | `/v2/process-instances/{key}/statistics/element-instances` | — | Aggregated element counts by state |
+| `GET` | `/v2/process-instances/{key}/sequence-flows` | — | Which sequence flows were taken |
+
+
+Discoverability on these endpoints was difficult:
+- The testing documentation (`test-scenario-dsl.md`, CPT guides) never mentions these REST endpoints as an alternative for non-Java assertions
+- The AI coding assistant (which wrote the original DSL runner) searched for endpoints on the `/v2/process-instances/{key}/...` sub-resource pattern and found only the statistics/sequence-flows/call-hierarchy endpoints — it did not discover the top-level `/v2/element-instances/search` and `/v2/variables/search` endpoints
+
+
+
+### Why it matters
+
+- **The capability exists but the testing docs don't connect the dots.** A developer reading the CPT DSL documentation and wanting to implement a non-Java runner has no indication that `POST /v2/element-instances/search` exists and can serve as the foundation for `ASSERT_ELEMENT_INSTANCES`. The REST API reference and the testing guide are separate doc trees with no cross-references.
+- **AI coding assistants pattern-match on sub-resources.** When asked "how do I get element instances for a process instance?", an AI will look for `/v2/process-instances/{key}/element-instances` (a sub-resource, which doesn't exist) rather than the top-level search endpoint with a filter. This is a REST API design choice, not a bug, but it reduces discoverability.
+- **The API scatters process instance data across unrelated top-level resources.** To fully inspect a process instance's state for testing, you need to call three separate endpoints across two different URL hierarchies: `POST /v2/element-instances/search` (with a `processInstanceKey` filter) for element states, `POST /v2/variables/search` (with the same filter) for variables, and `GET /v2/process-instances/{key}` for the overall process state. None of these sit under `/v2/process-instances/{key}/...` where a developer would naturally look. By contrast, `/v2/process-instances/{key}/statistics/element-instances` and `/v2/process-instances/{key}/sequence-flows` *do* live under the process instance sub-resource — but they return aggregated counts, not the individual element instances you need for assertions. The result: a developer who explores the process instance sub-resource finds tantalizing hints (statistics, sequence flows) but misses the actual data (element states, variables) because it lives elsewhere. A convenience endpoint like `GET /v2/process-instances/{key}/element-instances` or even a composite `GET /v2/process-instances/{key}/details` returning elements + variables in one call would dramatically improve the testing DX.
+- **The sequence-flows endpoint is a hidden gem.** `GET /v2/process-instances/{key}/sequence-flows` returns which paths were taken through the process, which is arguably even better for testing gateway routing than element state assertions. This endpoint is not mentioned anywhere in the testing documentation.
+
+### Suggestion
+
+1. **Cross-reference REST API endpoints in the testing documentation.** Add a "Testing with the REST API" section to the CPT DSL docs showing how non-Java runners can implement assertions using `POST /v2/element-instances/search`, `POST /v2/variables/search`, and `GET /v2/process-instances/{key}/sequence-flows`. Include concrete examples with the `@camunda8/sdk` typed methods.
+2. **Add convenience sub-resource endpoints under `/v2/process-instances/{key}/`.** A `GET /v2/process-instances/{key}/element-instances` endpoint (returning the same data as the search endpoint, pre-filtered to that process instance) would match the mental model developers start with. Similarly, `GET /v2/process-instances/{key}/variables` would eliminate the need to know about the top-level search endpoint. This is a thin wrapper over the existing search infra but would significantly improve discoverability.
+3. **Document the Node.js testing pattern.** A "Testing Camunda processes with Node.js" guide showing the polling + search pattern would help developers who can't or don't want to use Java CPT.
+
+---
+
+## Problem 4.3: CPT needs a way to mock ad-hoc sub-process completion for agentic processes
+
+### What happened
+
+Both the Java CPT and Node.js integration tests hit the same wall: you can mock the AI Agent connector's job worker (`io.camunda.agenticai:aiagent-job-worker:1`) to activate the ad-hoc sub-process, but you cannot signal that the agent's conversation is **done**. The connector's internal orchestration loop keeps creating new jobs after each tool call, and neither framework provides a way to say "the agent has finished — close the sub-process."
+
+In Java CPT, `mockJobWorker("io.camunda.agenticai:aiagent-job-worker:1").thenComplete()` completes the initial activation job, but the loop immediately creates the next one. The test can only assert `hasActiveElements("AgentTools")` — never `isCompleted()`. In Node.js, the same limitation applies: the mock worker completes individual jobs but cannot terminate the loop.
+
+The workaround in both languages was to **weaken the assertions**: instead of testing the full happy path through the agent and out the other side, the tests assert that the ad-hoc sub-process *activated* and stop there. This means the post-agent portion of the process (everything after the ad-hoc sub-process) is untested.
+
+### Why it matters
+
+- **Every process using the AI Agent connector has an untestable segment.** The post-agent flow — which may include error handling, notifications, data persistence, or downstream service calls — cannot be reached in a CPT test.
+- **The ad-hoc sub-process is opaque to the test framework.** CPT treats it as a black box with no hooks for controlling its lifecycle. Unlike service tasks (where `thenComplete(vars)` gives full control), the agent sub-process has no `thenFinish()` or `mockAdHocSubProcessCompletion()` equivalent.
+- **This is a known gap** tracked in [camunda/product-hub#3315](https://github.com/camunda/product-hub/issues/3315).
+
+### Suggestion
+
+Follow [camunda/product-hub#3315](https://github.com/camunda/product-hub/issues/3315) :)
+
+---
+
+## Problem 4.4: Publish a CPT-equivalent testing package for every officially supported API client
+
+### What happened
+
+Java CPT provides a turnkey process testing experience: `@CamundaProcessTest` starts an engine via Testcontainers, auto-registers mock workers, and offers a fluent assertion API (`assertThat(processInstance).hasCompletedElements(...).isCompleted()`). The entire ceremony is one annotation and a few lines of assertion code.
+
+The Node.js SDK (`@camunda8/sdk` 8.9.0-alpha.3) now has the raw building blocks — `searchElementInstances()`, `searchVariables()`, `searchProcessInstances()` — but using them for testing requires substantial boilerplate:
+
+- **Polling loops.** Every assertion needs a retry-with-timeout wrapper because the search endpoints are eventually consistent. Java CPT handles this internally; Node.js tests must implement it manually.
+- **Filter construction.** Each search call requires building a filter object (`{ filter: { processInstanceKey, elementId, state } }`). CPT abstracts this behind `hasCompletedElements("A", "B")`.
+- **Worker lifecycle management.** `createWorker()` returns a handle that the test must close explicitly. CPT's `mockJobWorker()` is auto-cleaned per test.
+- **No embedded engine.** Node.js tests require an external C8 Run instance; CPT starts its own via Testcontainers.
+
+The custom DSL runner (`dsl-runner.js`, ~120 lines) built for this project is essentially a minimal, hand-rolled version of what a first-party testing package would provide. Every Node.js developer writing process tests will end up building something similar — or, more likely, skip element-level assertions entirely and settle for weaker tests.
+
+### Why it matters
+
+- **Camunda officially supports multiple API clients** (Java, Node.js, Python, C#). Only Java has a first-class testing story. Every other language is left to assemble raw REST calls into an ad-hoc test harness.
+- **The ergonomics gap discourages thorough testing.** In Java, asserting "these 5 elements completed and this variable equals X" is a one-liner. In Node.js, the same assertion is 20+ lines of polling, filtering, and manual comparison. Developers under time pressure will write fewer and weaker tests.
+- **The building blocks already exist.** The 8.9 alpha SDK exposes typed search methods. What's missing is a thin layer on top: `waitForProcessCompletion(key, timeout)`, `assertCompletedElements(key, ["A", "B"])`, `assertVariable(key, "matchedConcerts", expectedValue)`, and `mockWorker(type, handler)` with auto-cleanup. This is not a large engineering effort — it's packaging patterns that every test author re-invents.
+- **The DSL scenario approach amplifies the need.** The CPT DSL (`@TestScenarioSource`) lets you write test scenarios as JSON and run them in any language — but only if each language has a runner that can execute the instructions. Without a testing package, each language community must build its own runner from scratch, defeating the "write once, run anywhere" promise of the DSL.
+
+### Suggestion
+
+1. **Publish a `@camunda8/process-test` (or similar) < insert language here > package** that wraps the SDK's search methods in test-friendly helpers.
+2. **Follow the same pattern for every officially supported SDK.** Python, C#, or any future client should ship with a testing companion package. The API surface is small (the helpers above are ~200 lines of code per language) and the DX impact is outsized.
+3. **At minimum, publish the polling + assertion patterns as documentation.** Even without a dedicated package, a "Testing Camunda processes with < supported language here >" guide showing the `searchElementInstances` polling pattern, the filter shapes, and the worker lifecycle management would prevent every developer from re-discovering these independently.
+
+---
+
 
 ## Problem 5: No programmatic reference for webhook connector properties
 

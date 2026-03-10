@@ -138,7 +138,7 @@ async function fetchSavedTrackArtists(accessToken) {
   return Array.from(artistMap.values());
 }
 
-function simplifyArtist(artist) {
+export function simplifyArtist(artist) {
   return {
     name: artist.name,
     id: artist.id || null,

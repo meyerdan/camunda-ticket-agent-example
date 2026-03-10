@@ -59,6 +59,6 @@ export function registerMatchArtists(zeebe) {
   });
 }
 
-function normalize(name) {
+export function normalize(name) {
   return (name || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '');
 }
